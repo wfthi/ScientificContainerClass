@@ -36,6 +36,8 @@ from astropy.table import QTable
 import pandas as pd
 from astropy.io import fits
 import astropy.units as u
+# local
+from index_all import index_all
 warnings.filterwarnings("error", category=np.VisibleDeprecationWarning)
 
 
@@ -107,17 +109,48 @@ def to_numpy(d):
     >>> d = {'a': [1, 2] * u.mm, 'b': 3 * u.deg,
     ...      'c': np.array([4, 5]), 'd': np.array([])}
     >>> dtype, dunits, obj = to_numpy(d)
+    >>> d = {'a': [1, 2] * u.mm, 'b': 3 * u.deg,
+    ...      'c': np.array([4, 5]), 'd': ['', 3 * u.m]}
+    >>> dtype, dunits, obj = to_numpy(d)
+    >>> dunits
+    {'a': Unit("mm"), 'b': Unit("deg"), 'c': '', 'd': Unit("m")}
+    >>> obj
+    {'a': array([1., 2.]), 'b': 3.0, 'c': array([4, 5]), 'd': [None, 3.0]}
     """
     dunits = dict()
     dtype = dict()
     d2 = dict()
     for k, v in d.items():
+        dunits[k] = ''
+        d2[k] = v
         if isinstance(v, u.Quantity):
             dunits[k] = v.unit
             d2[k] = v.value
         else:
-            dunits[k] = ''
-            d2[k] = v
+            ind1 = index_all(v, '', return_list=True)
+            ind2 = index_all(v, None, return_list=True)
+            if ((ind1 != [] and type(ind1[0]) is not list) or
+                    (ind2 != [] and type(ind2[0]) is not list)):
+                ulist = []
+                v3 = []
+                for v2 in v:
+                    if v2 != '' and v2 is not None:
+                        if isinstance(v2, u.Quantity):
+                            ulist.append(v2.unit)
+                            v3.append(v2.value)
+                            dtype[k] = type(v2.value)
+                        else:
+                            ulist.append('no_units')
+                            v3.append(v2)
+                            dtype[k] = type(v2)
+                    else:
+                        v3.append(None)
+                uniq_ulist = list(set(ulist))
+                if 'no_units' in uniq_ulist:
+                    uniq_ulist.remove('no_units')
+                if len(uniq_ulist) == 1:
+                    dunits[k] = uniq_ulist[0]
+                d2[k] = v3
 
     for k, v in d2.items():
         if isinstance(v, list):
@@ -135,11 +168,12 @@ def to_numpy(d):
         # https://stackoverflow.com/questions/
         # 2076343/extract-string-from-between-quotations
         # We assume a numpy array
-        full = re.findall("'([^']*)'", str(type(vv)))[0]
-        try:
-            dtype[k] = full.split('.')[1]
-        except IndexError:
-            dtype[k] = full.split('.')[0]
+        if k not in dtype:
+            full = re.findall("'([^']*)'", str(type(vv)))[0]
+            try:
+                dtype[k] = full.split('.')[1]
+            except IndexError:
+                dtype[k] = full.split('.')[0]
     return dtype, dunits, d2
 
 
@@ -209,8 +243,8 @@ def add_dict(d1, d2, stack=False):
         the arrays (of the same number of elements) instead of
         appending them (numpy append)
 
-    Returns:
-    --------
+    Returns
+    -------
     dd : dict
         a dictionary withe elements of d2 added at then end of d1
 
@@ -409,6 +443,7 @@ def use_list(dd, only_string=True):
         else:
             d2[k] = v
     return d2
+
 
 def stack_dict(d1, d2):
     """
@@ -639,6 +674,204 @@ def compare_dict(d1, d2, order=True):
     return added, removed, modified, same
 
 
+def merge_dict(d1, d2, merge_as_list=False,
+               no_units=False,
+               same_value_type=False, verbose=False):
+    """
+    Merge 2 dictionaries made of lists, numpy arrays
+    or astropy.Quantities
+
+    One can only merge dictionaries with the same values length
+    within each dictionary.
+    Trye to use add_dict(d1, d2, stack=True) instead.
+
+    Parameter
+    ---------
+    d1 : dict
+        The first dictionary
+
+    d2: dict
+        The second dictionary
+
+    merge_as_list: boolean, optional, default=False
+        ignore quantities and numpy array and merge the values
+        as a dictionnary of lists
+
+    no_units: boolean, optional, default=False
+        return only numpy arrays
+
+    same_value_type: boolean, optional, default=False
+        can only merge lists with values of the same type
+
+    verbose: boolean, optional, default=False
+        Output error messages if set to True
+
+    Returns
+    -------
+    : dict
+        the merged dictionnary
+
+    Examples
+    --------
+    >>> import astropy.units as u
+    >>> from classUtils import merge_dict
+    >>> d1 = {'a': [1, 2, 3], 'b': ['g', 'f', 'e']}
+    >>> d2 = {'a': [132, 21, 31], 'b': ['h', 'i', 'j'], 'c': [3, 4, 0]}
+    >>> md = merge_dict(d1, d2)
+    >>> md['b']
+    array(['g', 'f', 'e', 'h', 'i', 'j'], dtype='<U1')
+    >>> md = merge_dict(d1, d2, merge_as_list=True)
+    >>> md['b']
+    ['g', 'f', 'e', 'h', 'i', 'j']
+    >>> d1 = {'a': np.array([1, 2, 3]), 'b': ['g', 'f', 'e']}
+    >>> d2 = {'a': np.array([132, 21, 31]), 'b': ['h', 'i', 'j'],
+    ...       'c': [3, 4, 0]}
+    >>> md = merge_dict(d1, d2)
+    >>> md['a']
+    array([  1,   2,   3, 132,  21,  31])
+    >>> md = merge_dict(d1, d2, merge_as_list=True)
+    >>> md['a']
+    [1, 2, 3, 132, 21, 31]
+    >>> d1 = {'a': [1, 2, 3] * u.cm, 'b': ['g', 'f', 'e']}
+    >>> d2 = {'a': [132, 21, 31] * u.cm, 'b': ['h', 'i', 'j'], 'c': [3, 4, 0]}
+    >>> md = merge_dict(d1, d2)
+    >>> md['a']
+    <Quantity [  1.,   2.,   3., 132.,  21.,  31.] cm>
+    >>> md = merge_dict(d1, d2, no_units=True)
+    >>> md['a']
+    array([  1.,   2.,   3., 132.,  21.,  31.])
+    >>> d1 = {'a': [1, 2, 3], 'b': ['g', 'f', 'e']}
+    >>> d2 = {'a': [132, 21, 31] * u.cm, 'b': ['h', 'i', 'j'], 'c': [3, 4, 0]}
+    >>> md = merge_dict(d1, d2, merge_as_list=True)
+    >>> md['a']
+    [1, 2, 3, 132.0, 21.0, 31.0]
+    >>> d1 = {'b': [1, 2, 3], 'a': ['g', 'f', 'e']}
+    >>> d2 = {'a': [132, 21, 31], 'b': ['h', 'i', 'j'], 'c': [3, 4, 0]}
+    >>> md = merge_dict(d1, d2)
+    >>> md['a']
+    array(['g', 'f', 'e', '132', '21', '31'], dtype='<U21')
+    >>> md['a']
+    array(['g', 'f', 'e', '132', '21', '31'], dtype='<U21')
+    >>> md = merge_dict(d1, d2, merge_as_list=True)
+    >>> md['a']
+    ['g', 'f', 'e', 132, 21, 31]
+    >>> md = merge_dict(d1, d2, same_value_type=True, verbose=True)
+    Dictionary with different types of values
+    Set same_value_type=False to ignore the check
+    >>> d1 = {'a': [1, 2, 3] * u.cm, 'b': ['g', 'f', 'e']}
+    >>> d2 = {'a': [132, 21, 31] * u.cm, 'b': ['h', 'i', 'j'],
+    ...       'c': [3, 4, 0] * u.K}
+    >>> md = merge_dict(d1, d2)
+    >>> d1 = {'a': [1, 2, 3] * u.cm, 'b': ['g', 'f', 'e']}
+    >>> d2 = {'a': [132, 21, 31] * u.cm, 'b': ['h', 'i', 'j'],
+    ...       'c': [3, 4, 0]}
+    >>> md = merge_dict(d1, d2)
+    """
+    keys = list(d1.keys())
+    keys.extend(list(d2.keys()))
+    keys = list(set(keys))
+
+    dtype1, dunits1, _ = to_numpy(d1)
+    dtype2, dunits2, _ = to_numpy(d2)
+
+    # merge only if the values are of the same type
+    if same_value_type:
+        same_type = {k: True for k in keys}
+        for k in keys:
+            if k in dtype1:
+                if k in dtype2:
+                    if dtype1 == dtype2:
+                        same_type[k] = True
+                    else:
+                        same_type[k] = False
+        if not all(list(same_type.values())):
+            print('Dictionary with different types of values')
+            print('Set same_value_type=False to ignore the check')
+            return None
+
+    # merge only the values that have the same units
+    if not no_units and not merge_as_list:
+        same_units = {'k': True for k in keys}
+        for k in keys:
+            if k in dunits1:
+                if k in dunits2:
+                    if dunits1[k] == dunits2[k]:
+                        same_units[k] = True
+                    else:
+                        same_units[k] = False
+        if not all(list(same_units.values())):
+            if verbose:
+                logging.error('Values do not have the same input units')
+                logging.error('Set no_units=True or merge_as_list=True\
+                      to ignore the units')
+            return None
+
+    # Check that the length of the values are the same for all the keys
+    ld1, ld2 = [], []
+    for k1, l1 in d1.items():
+        try:
+            ld1.append(len(l1))
+        except TypeError:
+            d1[k1] = [d1[k1]]
+            ld1.append(1)
+    if len(set(ld1)) == 1:
+        ld1 = ld1[0]
+    else:
+        print('Values of different lengths between lists in the dict 1')
+        return None
+    for k2, l2 in d2.items():
+        try:
+            ld2.append(len(l2))
+        except TypeError:
+            d2[k2] = [d2[k2]]
+            ld2.append(1)
+    if len(set(ld2)) == 1:
+        ld2 = ld2[0]
+    else:
+        print('Values of different lengths between lists in the dict 2')
+        return None
+
+    dunits = {}
+    new_dict = {}
+    for k in keys:
+        if k in dunits1:
+            dunits[k] = dunits1[k]
+        elif k in dunits2:
+            dunits[k] = dunits2[k]
+        else:
+            print("Something wrong happened")
+            return None
+        if k in d1:
+            if dunits1[k] != '':
+                new_dict[k] = list(d1[k].value).copy()
+            else:
+                new_dict[k] = list(d1[k]).copy()
+        else:
+            new_dict[k] = [None] * ld1
+        if k in d2:
+            if dunits2[k] != '':
+                new_dict[k].extend(list(d2[k].value))
+            else:
+                new_dict[k].extend(list(d2[k]))
+        else:
+            new_dict[k].extend([None] * ld2)
+        if not merge_as_list:
+            new_dict[k] = np.array(new_dict[k])
+            if not no_units:
+                if dunits[k] != '':
+                    if None in new_dict[k]:
+                        val = []
+                        for v in new_dict[k]:
+                            if v is not None:
+                                val.append(v * u.Unit(dunits[k]))
+                            else:
+                                val.append(None)
+                        new_dict[k] = val
+                    else:
+                        new_dict[k] *= u.Unit(dunits[k])
+    return new_dict
+
+
 class classUtils:
     """
     Base class with special methods. Basically classUtils
@@ -705,6 +938,7 @@ class classUtils:
     * to_csv
     * from_csv
     * object_to_str
+    * merge
     """
     def __init__(self, **kwargs):
         """
@@ -951,6 +1185,25 @@ class classUtils:
         else:
             raise KeyError('Unknown item type:', type(item))
 
+    def clean_quantities(self):
+        """
+        Private method
+
+        transform list of the same quantities into a quantity array
+        """
+        ulist = []
+        for k1, v1 in self.items():
+            if isinstance(v1, list):
+                for v2 in v1:
+                    if isinstance(v2, astropy.units.quantity.Quantity):
+                        ulist.append(v2.unit)
+                    else:
+                        ulist.append('')
+                uniq_ulist = list(set(ulist))
+                if '' not in ulist and len(list(set(ulist))) == 1:
+                    self[k1] = [v2.value for v2 in v1] * u.Unit(uniq_ulist[0])
+        return self
+
     def __len__(self):
         """
         Compute the length (ie the number of rows).
@@ -1037,7 +1290,7 @@ class classUtils:
 
     def __add__(self, other, stack=False):
         """
-        Merging of two objects
+        Addition/Stacking/Merging of two objects
         It is an operator overwriting way to perform the task
 
         Notes
@@ -1071,7 +1324,7 @@ class classUtils:
         True
         >>> obj5 = obj1.__add__(obj2, stack=True)
         """
-        added, removed, modified, same, warning = self.compare(other)
+        added, removed, _, _, _ = self.compare(other)
         if list(added) == [] and list(removed) == []:
             obj = self.copy()
             obj.__dict__.update(add_dict(self.__dict__, other.__dict__,
@@ -2678,8 +2931,20 @@ class classUtils:
             else:  # multiple rows
                 try:
                     # convert the list to a numpy array with the right type
+                    NoneExist = False
                     if 'bool' not in t1:  # t1 is the type
-                        d[k1] = np.array(c1).astype(t1)
+                        if '' in c1:  # There are at least one None value
+                            d[k1] = [None if x == '' else x for x in c1]
+                            NoneExist = True
+                        else:
+                            if 'int' in t1:  # pb with numpy.int64, ...
+                                d[k1] = np.array(c1).astype('int')
+                            if 'float' in t1:
+                                d[k1] = np.array(c1).astype('float')
+                            if 'str' in t1:
+                                d[k1] = np.array(c1).astype('str')
+                            if 'bool' in t1:
+                                d[k1] = np.array(c1).astype('bool')
                     else:  # there is no specific type for bool
                         d[k1] = np.array(c1)
                 except ValueError:  # inhomogeneous data
@@ -2698,7 +2963,16 @@ class classUtils:
                         llist = True
                     d[k1] = c4  #
             if u1 != '' and not llist:  # assign a units
-                d[k1] *= u.Unit(u1)
+                if NoneExist:
+                    v2 = []
+                    for v in d[k1]:
+                        if v != '' and v is not None:
+                            v2.append(v * u.Unit(u1))
+                        else:
+                            v2.append(v)
+                    d[k1] = v2
+                else:
+                    d[k1] *= u.Unit(u1)
         #  return the class from the dictionary
         return cls(**d)
 
@@ -2740,6 +3014,86 @@ class classUtils:
         pivot.remove(new_key)
         new_dict[pivot_name] = pivot
         return classUtils(**new_dict)
+
+    def merge(self, other, inplace=False, **kwargs):
+        """
+        Parameter
+        ---------
+        self : classUtils class
+            The first object
+
+        self : classUtils class
+            The second object
+
+        merge_as_list : boolean, optional, default=False
+            ignore quantities and numpy array and merge the values
+            as lists
+
+        no_units : boolean, optional, default=False
+            return only numpy arrays
+
+        same_value_type : boolean, optional, default=False
+            can only merge lists with values of the same type
+
+        verbose : boolean, optional, default=False
+            Output error messages if set to True
+
+        Returns
+        -------
+        self : classUtils class
+            if inplace=True, self mergerd with other
+
+        : classUtils class
+            merged objects as a new object
+
+        Examples
+        --------
+        >>> import astropy.units as u
+        >>> from classUtils import classUtils
+        >>> class Test(classUtils):
+        ...     def __init__(self, **kwargs):
+        ...         super().__init__(**kwargs)
+        >>> d1 = {'a': [1, 2, 3], 'b': ['g', 'f', 'e']}
+        >>> d2 = {'a': [132, 21, 31], 'b': ['h', 'i', 'j'],
+        ...       'c': [3, 4, 0]}
+        >>> test1 = Test.from_dict(d1)
+        >>> test2 = Test.from_dict(d2)
+        >>> md = test1.merge(test2)
+        >>> md.to_csv('test_merge.csv')
+        >>> md2 = Test.from_csv('test_merge.csv')
+        >>> md == md2
+        True
+        >>> d1 = {'a': [1, 2, 3] * u.cm, 'b': ['g', 'f', 'e']}
+        >>> d2 = {'a': [132, 21, 31] * u.cm, 'b': ['h', 'i', 'j'],
+        ...       'c': [3, 4, 0]}
+        >>> test1 = Test.from_dict(d1)
+        >>> test2 = Test.from_dict(d2)
+        >>> md = test1.merge(test2)
+        >>> md.to_csv('test_merge.csv')
+        >>> md2 = Test.from_csv('test_merge.csv')
+        >>> md == md2
+        True
+        >>> d1 = {'a': [1, 2, 3] * u.cm, 'b': ['g', 'f', 'e']}
+        >>> d2 = {'a': [132, 21, 31] * u.cm, 'b': ['h', 'i', 'j'],
+        ...       'c': [3, 4, 0] * u.K}
+        >>> test1 = Test.from_dict(d1)
+        >>> test2 = Test.from_dict(d2)
+        >>> md = test1.merge(test2)
+        >>> md.to_csv('test_merge.csv')
+        >>> md2 = Test.from_csv('test_merge.csv')
+        >>> md == md2
+        True
+        """
+        d1 = self.to_dict()
+        d2 = other.to_dict()
+        md = merge_dict(d1, d2, **kwargs)
+        if inplace:
+            self.__dict__.update(md)
+            return self
+        else:
+            out = self.copy()
+            out.__dict__.update(md)
+            return out
 
 
 class SizeError(Exception):
