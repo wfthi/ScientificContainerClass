@@ -33,22 +33,44 @@ def flatten_list(l1, return_lev=False):
     >>> import numpy as np
     >>> from index_all import *
     >>> ll = ['a', 'b' , 'v']
+    >>> index_all(ll, 'g')
+    []
+    >>> index_all(ll, 'b')
+    1
     >>> ll = ['a', 'b' , 'v', 'a']
+    >>> index_all(ll, 'a')
+    [0, 3]
     >>> ll = [['a', 'b', ['c', 'd']], ['e', 'f'], 'g']
+    >>> index_all(ll, 'd')
+    [0, 2, 1]
     >>> ll = [['a', 'b', ['ccc', 'd']], ['e', 'f'], 'gg', 'h']
+    >>> index_all(ll, 'gg')
+    [2, 0]
     >>> ll = [['a', 'b', ['c', ['d', 'e']]], ['f',
     ...       ['d', 'h']], ['i', 'j'], 'k']
+    >>> index_all(ll, 'd')
+    [[0, 2, 1, 0], [1, 1, 0]]
+    >>> flatten_list(ll)
+    ['a', 'b', 'c', 'd', 'e', 'f', 'd', 'h', 'i', 'j', 'k']
     >>> ll = [['a', 3.2, ['c', [4, 'ee']]], ['f',
     ...       [1e-12, 'h']], ['i', 'j'], 'kk']
+    >>> index_all(ll, 1e-12)
+    [1, 1, 0]
     >>> ll = [2, 3, [5, np.array([7., 8.])], [10, 12]]
     >>> fll, llev = flatten_list(ll, return_lev=True)
+    >>> fll
+    [2, 3, 5, 7.0, 8.0, 10, 12]
     >>> ind = get_indices(llev)
     >>> index_all(ll, 'g')
+    []
     >>> index_all(ll, 'd')
+    []
     >>> example = [[[1, 2, 3], 2, [1, 3]], [1, 2, 3]]
     >>> index_all(example, 2)
+    [[0, 0, 1], [0, 1], [1, 1]]
     >>> ll = [2, None, [5, np.array([7., 8.])], [10, 12]]
     >>> index_all(ll, None)
+    [1, 0]
     """
     islist, llev = [True], []
     while any(islist):
@@ -77,6 +99,9 @@ def flatten_list(l1, return_lev=False):
 
 
 def index_all(ll, match, return_list=False):
+    """
+    Helper function
+    """
     if type(ll) is not list:
         return []
     fll, llev = flatten_list(ll, return_lev=True)
@@ -94,3 +119,9 @@ def index_all(ll, match, return_list=False):
         return match_ind[0]
     else:
         return match_ind
+
+
+if __name__ == "__main__":
+    import doctest
+    DOCTEST = True
+    doctest.testmod(verbose=True, optionflags=doctest.ELLIPSIS)
