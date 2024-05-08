@@ -20,7 +20,7 @@ Copyright (C) 2023  Wing-Fai Thi (when not specified otherwise)
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-# standard library
+# standard library python 3.9
 import re
 import logging
 import inspect
@@ -2851,14 +2851,15 @@ class classUtils:
             print("I/O error")
 
     @classmethod
-    def from_csv(cls, filename):
+    def from_csv(cls, filename, variable_type=True, variable_units=True,
+                 delimiter=','):
         """
         Read an object of class classUtils or children class of it
         from a csv file
 
         csv format file
         Row 1: header = keys
-        Row 2: type of the variable
+        Row 2: type of the variables
         Row 2: units, to be able to reconstruct Quantities
         Row 3 ...: the actual data
 
@@ -2868,11 +2869,26 @@ class classUtils:
         the separate type and units information to reconstruct
         the initial data.
 
+        The reader requires at least that a header with the name of the
+        columns is provided.
+
         Parameter
-        --------
+        ---------
         filename : str
             the full path the csv file
 
+        variable_type : boolean, optional, default=True
+            Do the data include information about the type (float, int, ...)
+            for the data? The user needs to look at the format of the data
+            first. 
+
+        variable_units : boolean, optional, default=True
+            Do the data include include information about the units?
+            The user needs to look at the format of the data first. 
+
+        delimiter : str, optional, default=','
+            The delimiter used to separate the data
+        
         Example
         -------
         >>> import numpy as np
@@ -2895,11 +2911,24 @@ class classUtils:
         >>> v2 = Test.from_csv('test.csv')
         """
         file = open(filename)
-        csvreader = csv.reader(file, delimiter=',',
+        try:
+            csvreader = csv.reader(file, delimiter=delimiter,
                                quoting=csv.QUOTE_NONNUMERIC)
-        keys = next(csvreader)
-        types = next(csvreader)
-        units = next(csvreader)
+            keys = next(csvreader)
+        except ValueError:  # Header entries have no quote
+            file.close()
+            file = open(filename)
+            csvreader = csv.reader(file, delimiter=delimiter)
+            keys = next(csvreader)
+        nb_columns = len(keys)
+        if variable_type:
+            types = next(csvreader)
+        else:
+            types = [''] * nb_columns
+        if variable_units:   
+            units = next(csvreader)
+        else:
+            units = [''] * nb_columns
 
         # Read the csv file row by row
         rows = []
@@ -2912,7 +2941,10 @@ class classUtils:
         else:
             col = row
         d = dict()
+
+        # interprete the data with their type and units
         for k1, t1, u1, c1 in zip(keys, types, units, col):
+            d[k1] = np.array(c1)
             llist = False
             if ir == 0:  # one row
                 if ('[' not in c1) and (']' not in c1):
@@ -2934,17 +2966,24 @@ class classUtils:
                     NoneExist = False
                     if 'bool' not in t1:  # t1 is the type
                         if '' in c1:  # There are at least one None value
-                            d[k1] = [None if x == '' else x for x in c1]
+                            type_str = False
+                            for x in c1:
+                                if isinstance(x, str):
+                                    type_str = True
+                            if not type_str:
+                                d[k1] = [None if x == '' else x for x in c1]
                             NoneExist = True
                         else:
                             if 'int' in t1:  # pb with numpy.int64, ...
                                 d[k1] = np.array(c1).astype('int')
-                            if 'float' in t1:
+                            elif 'float' in t1:
                                 d[k1] = np.array(c1).astype('float')
-                            if 'str' in t1:
+                            elif 'str' in t1:
                                 d[k1] = np.array(c1).astype('str')
-                            if 'bool' in t1:
+                            elif 'bool' in t1:
                                 d[k1] = np.array(c1).astype('bool')
+                            else:
+                                d[k1] = np.array(c1)
                     else:  # there is no specific type for bool
                         d[k1] = np.array(c1)
                 except ValueError:  # inhomogeneous data
@@ -2980,6 +3019,18 @@ class classUtils:
         """
         Pivot the object by adding a pivot 'column', which have the
         input keys as values
+
+        Parameter
+        ---------
+        self : classUtils object
+            an instance of the class
+
+        new_key : str
+            the name of one of the keys whose unique values will become the
+            new header/column names
+
+        pivot_name : str, optional, default=None
+            the name of the new pivot
 
         Examples
         --------
