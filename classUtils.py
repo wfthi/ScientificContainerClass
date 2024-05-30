@@ -872,6 +872,38 @@ def merge_dict(d1, d2, merge_as_list=False,
     return new_dict
 
 
+def check_unique(mydict, key_check):
+    """
+    Check for duplicate values
+
+    Parameters
+    ----------
+    mydict : dict
+        a dictionary
+
+    key_check : list
+        a list of keys for the values to be checked
+
+    Returns
+    -------
+    ok : bool
+        False if there is at least one duplicates
+    """
+    ok = True
+    for key in key_check:
+        if key in mydict.keys():
+            lunique = len(list(set(mydict[key])))
+            lsciLive = len(mydict[key])
+            if lsciLive > lunique:
+                logging.info("**************************************")
+                logging.info("There are duplicate values in %s", key)
+                logging.info("**************************************")
+                ok = False
+            else:
+                logging.info("No duplicate %s", key)
+    return ok
+
+
 class classUtils:
     """
     Base class with special methods. Basically classUtils
