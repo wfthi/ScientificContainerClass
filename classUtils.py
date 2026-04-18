@@ -36,6 +36,8 @@ from astropy.table import QTable
 import pandas as pd
 from astropy.io import fits
 import astropy.units as u
+from functools import wraps
+import matplotlib.pyplot as plt
 # local
 from index_all import index_all
 warnings.filterwarnings("error", category=np.VisibleDeprecationWarning)
@@ -904,8 +906,87 @@ def check_unique(mydict, key_check):
     return ok
 
 
+def ensure_consistency(f):
+    """
+    Decorator to ensure that a method doesn't leave the 
+    object in an inconsistent state.
+    """
+    @wraps(f)
+    def wrapper(self, *args, **kwargs):
+        # 1. Run the actual method (e.g., adding a column)
+        result = f(self, *args, **kwargs)
+        
+        # 2. Check if all columns still match in length
+        lengths = []
+        for val in self.__dict__.values():
+            if isinstance(val, (list, np.ndarray, u.Quantity)):
+                lengths.append(len(val))
+        
+        if len(set(lengths)) > 1:
+            raise ValueError(f"Consistency Error: Columns have mismatched lengths: {lengths}")
+            
+        return result
+    return wrapper
+
+
+def auto_pad_consistency(f):
+    """
+    Decorator that pads shorter columns with NaN or None 
+    to match the longest column in the object.
+    """
+    @wraps(f)
+    def wrapper(self, *args, **kwargs):
+        # 1. Execute the original method
+        result = f(self, *args, **kwargs)
+        
+        # Determine the target object (in-place vs new instance)
+        target = self if result is None else result
+        
+        # 2. Find the maximum length
+        col_data = {}
+        max_len = 0
+        
+        for key, val in target.__dict__.items():
+            if isinstance(val, (list, np.ndarray, u.Quantity)):
+                length = len(val)
+                col_data[key] = (val, length)
+                if length > max_len:
+                    max_len = length
+        
+        # 3. Apply padding to anything shorter than max_len
+        for key, (val, length) in col_data.items():
+            if length < max_len:
+                pad_count = max_len - length
+                
+                # Determine padding type (NaN for floats/quantities, None for objects)
+                is_numeric = False
+                if isinstance(val, (np.ndarray, u.Quantity)):
+                    is_numeric = np.issubdtype(val.dtype, np.number)
+                
+                padding = [np.nan] * pad_count if is_numeric else [None] * pad_count
+                
+                # Perform the join based on container type
+                if isinstance(val, u.Quantity):
+                    # Quantities need to concatenate with other Quantities or units
+                    padded_val = u.Quantity(np.append(val.value, padding), unit=val.unit)
+                elif isinstance(val, np.ndarray):
+                    padded_val = np.append(val, padding)
+                else: # Standard list
+                    padded_val = val + padding
+                
+                setattr(target, key, padded_val)
+                
+        return result
+    return wrapper
+
+
 class classUtils:
     """
+    Utility class, classUtils, designed to treat Python objects like enhanced 
+    dictionaries. It is particularly useful for scientific workflows 
+    (Astronomy/Physics) where data often moves between numpy arrays, astropy
+    Quantities (values with units), pandas DataFrames, and FITS files.
+
     Base class with special methods. Basically classUtils
     extends the dictionary class
 
@@ -971,6 +1052,8 @@ class classUtils:
     * from_csv
     * object_to_str
     * merge
+    * filter
+    * plot
     """
     def __init__(self, **kwargs):
         """
@@ -3178,6 +3261,37 @@ class classUtils:
             out.__dict__.update(md)
             return out
 
+    @ensure_consistency
+    def filter(self, mask):
+        """
+        Subsets all columns based on a boolean mask.
+        Example: obj.filter(obj.mag < 5.0)
+        """
+        new_data = {}
+        for k, v in self.__dict__.items():
+            # Filter sequences that match the mask
+            if isinstance(v, (np.ndarray, u.Quantity)):
+                new_data[k] = v[mask]
+            # Carry over metadata (strings, ints, etc.)
+            else:
+                new_data[k] = v
+        return self.__class__(**new_data)
+
+    def plot(self, x_key, y_key, **kwargs): 
+        """
+        Quick plotting helper that automatically looks up units for labels.
+        """
+        x_data = getattr(self, x_key)
+        y_data = getattr(self, y_key)
+    
+        plt.scatter(x_data, y_data, **kwargs)
+    
+        # Auto-label with units if they exist
+        _, units, _ = self.to_numpy(self.__dict__)
+        plt.xlabel(f"{x_key} [{units.get(x_key, '')}]")
+        plt.ylabel(f"{y_key} [{units.get(y_key, '')}]")
+        plt.tight_layout()
+        plt.show()
 
 class SizeError(Exception):
     pass
