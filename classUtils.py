@@ -4,7 +4,7 @@
 """
 This class contains utility functions for display and broadcasting
 
-Copyright (C) 2023  Wing-Fai Thi (when not specified otherwise)
+Copyright (C) 2023-2026  Wing-Fai Thi (when not specified otherwise)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
