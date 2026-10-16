@@ -20,7 +20,9 @@ Copyright (C) 2023-2026  Wing-Fai Thi (when not specified otherwise)
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-# standard library python 3.9
+from __future__ import annotations
+
+# standard library
 import re
 import logging
 import inspect
@@ -29,18 +31,30 @@ from copy import deepcopy
 import pprint
 import csv
 import warnings
+from functools import wraps
+from typing import Any
+
 # third-party
 import numpy as np
-import astropy
 from astropy.table import QTable
-import pandas as pd
 from astropy.io import fits
 import astropy.units as u
-from functools import wraps
+import pandas as pd
 import matplotlib.pyplot as plt
+
 # local
 from index_all import index_all
-warnings.filterwarnings("error", category=np.VisibleDeprecationWarning)
+
+# NOTE: the global filter was removed.  Apply it in your entry-point script
+# if you really need it:
+#   warnings.filterwarnings("error", category=np.VisibleDeprecationWarning)
+
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+
+
+class SizeError(Exception):
+    """Raised when an operation requires uniform column lengths."""
+    pass
 
 
 def constant(f):
@@ -365,7 +379,7 @@ def add_dict(d1, d2, stack=False):
                 logging.warning(f"Columns {a1[0]} have different units")
                 logging.warning("Return an empty dictionary")
                 logging.warning(f"First units {b1.unit}")
-                logging.warning(f"Second units {b1.unit}")
+                logging.warning(f"Second units {b2.unit}")
                 logging.warning("Try add with the option stack True")
                 return {}
 
@@ -769,43 +783,30 @@ def merge_dict(d1, d2, merge_as_list=False,
     ...       'c': [3, 4, 0]}
     >>> md = merge_dict(d1, d2)
     """
-    keys = list(d1.keys())
-    keys.extend(list(d2.keys()))
-    keys = list(set(keys))
-
+    keys = list(set(list(d1.keys()) + list(d2.keys())))
     dtype1, dunits1, _ = to_numpy(d1)
     dtype2, dunits2, _ = to_numpy(d2)
 
-    # merge only if the values are of the same type
     if same_value_type:
         same_type = {k: True for k in keys}
         for k in keys:
-            if k in dtype1:
-                if k in dtype2:
-                    if dtype1 == dtype2:
-                        same_type[k] = True
-                    else:
-                        same_type[k] = False
-        if not all(list(same_type.values())):
+            if k in dtype1 and k in dtype2:
+                same_type[k] = (dtype1[k] == dtype2[k])   # per-key
+        if not all(same_type.values()):
             print('Dictionary with different types of values')
             print('Set same_value_type=False to ignore the check')
             return None
 
-    # merge only the values that have the same units
     if not no_units and not merge_as_list:
-        same_units = {'k': True for k in keys}
+        same_units = {k: True for k in keys}              # FIXED
         for k in keys:
-            if k in dunits1:
-                if k in dunits2:
-                    if dunits1[k] == dunits2[k]:
-                        same_units[k] = True
-                    else:
-                        same_units[k] = False
-        if not all(list(same_units.values())):
+            if k in dunits1 and k in dunits2:
+                same_units[k] = (dunits1[k] == dunits2[k])
+        if not all(same_units.values()):
             if verbose:
                 logging.error('Values do not have the same input units')
-                logging.error('Set no_units=True or merge_as_list=True\
-                      to ignore the units')
+                logging.error('Set no_units=True or merge_as_list=True '
+                              'to ignore the units')
             return None
 
     # Check that the length of the values are the same for all the keys
@@ -1106,7 +1107,7 @@ class classUtils:
         >>> print(obj1)
         {'x': [['a', 1], ['b', 2]], 'y': [0, 4]}
         """
-        return str(self.__dict__)
+        return f"{self.__class__.__name__}({self.__dict__})"
 
     def _set_one_(self, key, value):
         """
@@ -1319,7 +1320,7 @@ class classUtils:
                     self[k1] = [v2.value for v2 in v1] * u.Unit(uniq_ulist[0])
         return self
 
-    def __len__(self):
+    def __len__(self) -> int:
         """
         Compute the length (ie the number of rows).
 
@@ -1354,7 +1355,10 @@ class classUtils:
         >>> print(obj2._nelements())
         [5, 4]
         """
-        return self._nelements()
+        n = self._nelements()
+        if isinstance(n, list):
+            return max(n)
+        return int(n)
 
     def _nelements(self, exclude=[]):
         """
@@ -2085,7 +2089,7 @@ class classUtils:
         if isinstance(iarray, int):
             ind = np.array([iarray])
         else:
-            ind = np.array(iarray)
+            ind = np.sort(np.array(iarray))
 
         cancelled = False
         if self.check_consistency() is False:
@@ -2260,7 +2264,7 @@ class classUtils:
                                                       order=order)
         return added, removed, modified, same, warning
 
-    def __neq__(self, other):
+    def __ne__(self, other):
         """
         Overload the  != operator
 
@@ -3025,16 +3029,17 @@ class classUtils:
         >>> v1.to_csv('test.csv')
         >>> v2 = Test.from_csv('test.csv')
         """
-        file = open(filename)
-        try:
-            csvreader = csv.reader(file, delimiter=delimiter,
-                               quoting=csv.QUOTE_NONNUMERIC)
-            keys = next(csvreader)
-        except ValueError:  # Header entries have no quote
-            file.close()
-            file = open(filename)
-            csvreader = csv.reader(file, delimiter=delimiter)
-            keys = next(csvreader)
+        NoneExist = False                          # pre-initialised
+        with open(filename, newline='') as file:
+            try:
+                csvreader = csv.reader(file, delimiter=delimiter,
+                                       quoting=csv.QUOTE_NONNUMERIC)
+                keys = next(csvreader)
+            except ValueError:
+                file.seek(0)
+                csvreader = csv.reader(file, delimiter=delimiter)
+                keys = next(csvreader)
+
         nb_columns = len(keys)
         if variable_type:
             types = next(csvreader)
@@ -3179,7 +3184,7 @@ class classUtils:
         pivot = self.keys()
         pivot.remove(new_key)
         new_dict[pivot_name] = pivot
-        return classUtils(**new_dict)
+        return self.__class__(**new_dict)
 
     def merge(self, other, inplace=False, **kwargs):
         """
@@ -3287,7 +3292,7 @@ class classUtils:
         plt.scatter(x_data, y_data, **kwargs)
     
         # Auto-label with units if they exist
-        _, units, _ = self.to_numpy(self.__dict__)
+        _, units, _ = self.to_numpy()
         plt.xlabel(f"{x_key} [{units.get(x_key, '')}]")
         plt.ylabel(f"{y_key} [{units.get(y_key, '')}]")
         plt.tight_layout()
